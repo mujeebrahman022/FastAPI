@@ -1,0 +1,119 @@
+import datetime as dt
+from typing import List, Optional
+from fastapi import FastAPI, Query, HTTPException
+from pydantic import BaseModel, Field
+
+app = FastAPI()
+
+
+class TradeDetails(BaseModel):
+    buySellIndicator: str = Field(..., description="A value of BUY for buys, SELL for sells.")
+    price: float = Field(..., description="The price of the Trade.")
+    quantity: int = Field(..., description="The amount of units traded.")
+
+
+class Trade(BaseModel):
+    assetClass: Optional[str] = Field(None, alias="assetClass",
+                                      description="The asset class of the instrument traded. E.g. Bond, Equity, FX...etc")
+    counterparty: Optional[str] = Field(None, description="The counterparty the trade was executed with. May not always be available")
+    instrumentId: str = Field(..., alias="instrumentId", description="The ISIN/ID of the instrument traded. E.g. TSLA, AAPL, AMZN...etc")
+    instrumentName: str = Field(..., alias="instrumentName", description="The name of the instrument traded.")
+    tradeDateTime: dt.datetime = Field(..., alias="tradeDateTime", description="The date-time the Trade was executed")
+    tradeDetails: TradeDetails = Field(..., alias="tradeDetails", description="The details of the trade, i.e. price, quantity")
+    tradeId: str = Field(None, alias="tradeId", description="The unique ID of the trade")
+    trader: str = Field(..., description="The name of the Trader")
+
+
+# Mocked database storage
+trades_db = []
+
+
+@app.get("/")
+async def root():
+    return {"message": "Welcome to the API!"}
+
+
+@app.get("/trades", response_model=List[Trade])
+async def list_trades(
+    assetClass: Optional[str] = Query(None, description="Asset class of the trade."),
+    start: Optional[dt.datetime] = Query(None, description="The minimum date for the tradeDateTime field."),
+    end: Optional[dt.datetime] = Query(None, description="The maximum date for the tradeDateTime field."),
+    minPrice: Optional[float] = Query(None, description="The minimum value for the tradeDetails.price field."),
+    maxPrice: Optional[float] = Query(None, description="The maximum value for the tradeDetails.price field."),
+    tradeType: Optional[str] = Query(None, description="The tradeDetails.buySellIndicator is a BUY or SELL")
+) -> List[Trade]:
+    filtered_trades = trades_db
+
+    if assetClass:
+        filtered_trades = [trade for trade in filtered_trades if trade.assetClass == assetClass]
+
+    if start:
+        filtered_trades = [trade for trade in filtered_trades if trade.tradeDateTime >= start]
+
+    if end:
+        filtered_trades = [trade for trade in filtered_trades if trade.tradeDateTime <= end]
+
+    if minPrice:
+        filtered_trades = [trade for trade in filtered_trades if trade.tradeDetails.price >= minPrice]
+
+    if maxPrice:
+        filtered_trades = [trade for trade in filtered_trades if trade.tradeDetails.price <= maxPrice]
+
+    if tradeType:
+        filtered_trades = [trade for trade in filtered_trades if trade.tradeDetails.buySellIndicator == tradeType]
+
+    return filtered_trades
+
+
+@app.get("/trades/{trade_id}", response_model=Trade)
+async def get_trade(trade_id: str) -> Trade:
+    for trade in trades_db:
+        if trade.tradeId == trade_id:
+            return trade
+    raise HTTPException(status_code=404, detail="Trade not found")
+
+
+@app.post("/trades", response_model=Trade)
+async def create_trade(trade: Trade) -> Trade:
+    if trade.tradeId is not None:
+        raise HTTPException(status_code=400, detail="Trade ID should not be provided for new trades.")
+    
+    # Generate a unique trade ID (you can use a different method based on your requirements)
+    trade.tradeId = str(len(trades_db) + 1)
+    
+    # Save the new trade in the database
+    trades_db.append(trade)
+    
+    return trade
+
+
+# Example data for testing
+example_trade_1 = Trade(
+    assetClass="Equity\n",
+    counterparty="ABC Corp\n",
+    instrumentId="AAPL\n",
+    instrumentName="Apple Inc\n",
+    tradeDateTime=dt.datetime.now(),
+    tradeDetails=TradeDetails(buySellIndicator="BUY", price=100.0, quantity=10),
+    tradeId="123\n",
+    trader="John Doe\n"
+)
+
+example_trade_2 = Trade(
+    assetClass="FX",
+    counterparty="XYZ Bank",
+    instrumentId="USD",
+    instrumentName="US Dollar",
+    tradeDateTime=dt.datetime.now(),
+    tradeDetails=TradeDetails(buySellIndicator="SELL", price=1.2, quantity=1000),
+    tradeId="456",
+    trader="Jane Smith"
+)
+
+trades_db.extend([example_trade_1, example_trade_2])
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="192.168.43.56", port=8080)
+    
